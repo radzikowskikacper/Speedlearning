@@ -1,0 +1,134 @@
+image: python:3.7.4-stretch
+
+variables:
+  APT_CACHE_DIR: $CI_PROJECT_DIR/apt
+
+  BACKEND_SERVICE_LABEL: 'speedlearning-backend-service'
+  BACKEND_SERVICE_DEVELOPMENT_LABEL: 'speedlearning-backend-service-development'
+  BACKEND_DEPLOYMENT_LABEL: 'speedlearning-backend-deployment'
+  BACKEND_DEPLOYMENT_DEVELOPMENT_LABEL: 'speedlearning-backend-deployment-development'
+  FRONTEND_SERVICE_LABEL: 'speedlearning-frontend-service'
+  FRONTEND_SERVICE_DEVELOPMENT_LABEL: 'speedlearning-frontend-service-development'
+  FRONTEND_DEPLOYMENT_LABEL: 'speedlearning-frontend-deployment'
+  FRONTEND_DEPLOYMENT_DEVELOPMENT_LABEL: 'speedlearning-frontend-deployment-development'
+
+  BACKEND_CONTAINER_PORT: 8000
+  BACKEND_EXPOSED_PORT: 8000
+  FRONTEND_CONTAINER_PORT: 80
+  FRONTEND_EXPOSED_PORT: 80
+
+stages:
+  - tests
+  - build
+  - deployment
+
+flake8:
+  stage: tests
+  allow_failure: true
+  script:
+    - apt-get update && apt-get -o dir::cache::archives="$APT_CACHE_DIR" install -y flake8
+    - flake8 --max-line-length=120 backend
+
+pytest:
+  stage: tests
+  script:
+    - export PIP_CACHE_DIR="/opt/cache/pip"
+    - pip install -r backend/requirements.txt
+    - pytest
+
+.registry_auth: &registry_auth
+  stage: build
+  image: docker:git
+  only:
+    refs:
+      - master
+      - develop
+  services:
+    - docker:dind
+  script:
+    - docker build -t $DOCKER_NAME $DIRECTORY
+    - docker tag $DOCKER_NAME $DOCKER_TAG
+    - docker login $CI_REGISTRY -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD
+    - docker push $DOCKER_TAG
+
+build_backend:
+  <<: *registry_auth
+  variables:
+    DIRECTORY: backend
+    DOCKER_NAME: ${CI_REGISTRY}/${CI_PROJECT_PATH}
+    DOCKER_TAG: ${CI_REGISTRY}/${CI_PROJECT_PATH}:${CI_COMMIT_SHA}-backend
+
+build_frontend:
+  <<: *registry_auth
+  variables:
+    DIRECTORY: frontend
+    DOCKER_NAME: ${CI_REGISTRY}/${CI_PROJECT_PATH}
+    DOCKER_TAG: ${CI_REGISTRY}/${CI_PROJECT_PATH}:${CI_COMMIT_SHA}-frontend
+
+.deployment_environment: &deployment_environment
+  image: henry40408/doctl-kubectl
+  stage: deployment
+  before_script:
+    - apk add -u gettext
+    - mkdir ~/.kube/ && echo $KUBE_CONFIG | base64 -d > ~/.kube/config
+    - doctl auth init --access-token $DIGITALOCEAN_TOKEN
+    - kubectl create secret docker-registry $GITLAB_REGISTRY_CREDENTIALS --docker-server=$CI_REGISTRY --docker-username="$CI_DEPLOY_USER" --docker-password="$CI_DEPLOY_PASSWORD" --docker-email="$GITLAB_USER_EMAIL" --dry-run=true -o yaml | kubectl apply -f - --namespace $KUBE_NAMESPACE
+  script:
+    - envsubst < devops/service.yml | kubectl apply -f -
+    - envsubst < devops/deployment.yml | kubectl apply -f -
+
+deploy_backend:
+  <<: *deployment_environment
+  only:
+    refs:
+      - master
+  variables:
+    CONTAINER_PORT: $BACKEND_CONTAINER_PORT
+    EXPOSED_PORT: $BACKEND_EXPOSED_PORT
+    SERVICE: $BACKEND_SERVICE_LABEL
+    DEPLOYMENT: $BACKEND_DEPLOYMENT_LABEL
+    IMAGE_TAG: ${CI_REGISTRY}/${CI_PROJECT_PATH}:${CI_COMMIT_SHA}-backend
+    CONTAINER: 'speedlearning-backend-pod'
+
+deploy_frontend:
+  <<: *deployment_environment
+  only:
+    refs:
+      - master
+  variables:
+    CONTAINER_PORT: $FRONTENT_CONTAINER_PORT
+    EXPOSED_PORT: $FRONTEND_EXPOSED_PORT
+    SERVICE: $FRONTEND_SERVICE_LABEL
+    DEPLOYMENT: $FRONTEND_DEPLOYMENT_LABEL
+    IMAGE_TAG: ${CI_REGISTRY}/${CI_PROJECT_PATH}:${CI_COMMIT_SHA}-frontend
+    CONTAINER: 'speedlearning-frontend-pod'
+
+deploy_backend_development:
+  <<: *deployment_environment
+  only:
+    refs:
+      - develop
+  variables:
+    CONTAINER_PORT: $BACKEND_CONTAINER_PORT
+    EXPOSED_PORT: $BACKEND_EXPOSED_PORT
+    SERVICE: $BACKEND_SERVICE_DEVELOPMENT_LABEL
+    DEPLOYMENT: $BACKEND_DEPLOYMENT_DEVELOPMENT_LABEL
+    IMAGE_TAG: ${CI_REGISTRY}/${CI_PROJECT_PATH}:${CI_COMMIT_SHA}-backend
+    CONTAINER: 'speedlearning-backend-development-pod'
+
+deploy_frontend_development:
+  <<: *deployment_environment
+  only:
+    refs:
+      - develop
+  variables:
+    CONTAINER_PORT: $FRONTEND_CONTAINER_PORT
+    EXPOSED_PORT: $FRONTEND_EXPOSED_PORT
+    SERVICE: $FRONTEND_SERVICE_DEVELOPMENT_LABEL
+    DEPLOYMENT: $FRONTEND_DEPLOYMENT_DEVELOPMENT_LABEL
+    IMAGE_TAG: ${CI_REGISTRY}/${CI_PROJECT_PATH}:${CI_COMMIT_SHA}-frontend
+    CONTAINER: 'speedlearning-frontend-development-pod'
+
+cache:
+  paths:
+    - apt/
