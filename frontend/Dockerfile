@@ -4,7 +4,7 @@ WORKDIR /usr/src/app
 COPY package.json package-lock.json ./
 RUN npm install
 COPY . .
-RUN npm update && npm run build --prod
+RUN npm run-script build --prod
 
 FROM nginx:1.15.8-alpine
 

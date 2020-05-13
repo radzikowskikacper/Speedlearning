@@ -1,8 +1,7 @@
 {
   "compileOnSave": false,
   "compilerOptions": {
-    "baseUrl": "./",
-    "downlevelIteration": true,
+    "importHelpers": true,
     "module": "esnext",
     "outDir": "./dist/out-tsc",
     "sourceMap": true,
@@ -17,6 +16,9 @@
     "lib": [
       "es2017",
       "dom"
+    ],
+    "plugins": [
+      { "name": "tslint-language-service"}
     ]
   }
 }
